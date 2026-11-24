@@ -1,0 +1,528 @@
+[
+  {
+    "id": "flow_api",
+    "type": "tab",
+    "label": "IoT REST API",
+    "disabled": false,
+    "info": ""
+  },
+  {
+    "id": "mqtt_broker_config",
+    "type": "mqtt-broker",
+    "name": "Local Mosquitto",
+    "broker": "localhost",
+    "port": "1883",
+    "clientid": "",
+    "autoConnect": true,
+    "usetls": false,
+    "protocolVersion": "4",
+    "keepalive": "60",
+    "cleansession": true,
+    "autoUnsubscribe": true,
+    "birthTopic": "",
+    "birthQos": "0",
+    "birthPayload": "",
+    "birthMsg": {},
+    "closeTopic": "",
+    "closeQos": "0",
+    "closePayload": "",
+    "closeMsg": {},
+    "willTopic": "",
+    "willQos": "0",
+    "willPayload": "",
+    "willMsg": {},
+    "userProps": "",
+    "sessionExpiry": ""
+  },
+  {
+    "id": "ws_listener",
+    "type": "websocket-listener",
+    "path": "/ws/sensor",
+    "wholemsg": "false"
+  },
+  {
+    "id": "sqlite_db",
+    "type": "sqlitedb",
+    "db": "iot.db",
+    "mode": "RWC"
+  },
+  {
+    "id": "mqtt_sensor_in",
+    "type": "mqtt in",
+    "z": "flow_api",
+    "name": "Subscribe Sensor",
+    "topic": "iot/sensor",
+    "qos": "0",
+    "datatype": "json",
+    "broker": "mqtt_broker_config",
+    "nl": false,
+    "rap": true,
+    "rh": 0,
+    "inputs": 0,
+    "x": 150,
+    "y": 80,
+    "wires": [
+      [
+        "store_sensor"
+      ]
+    ]
+  },
+  {
+    "id": "store_sensor",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Simpan, Broadcast & Cek Threshold",
+    "func": "const data = msg.payload;\nif (typeof data !== 'object' || data === null) { return null; }\ndata.received = new Date().toISOString();\nflow.set('lastSensor', data);\n\n// 1) Kirim ke dashboard via WebSocket\nconst out = {payload: {type: 'sensor', data: data}};\n\n// 2) Simpan ke SQLite (prepared statement)\nconst db = {params: {\n    $suhu: data.suhu,\n    $kelembaban: data.kelembaban,\n    $timestamp: data.timestamp,\n    $received: data.received\n}};\n\n// 3) Cek threshold -> notifikasi\nconst limit = global.get('threshold') ?? 30;\nlet alert = null;\nif (data.suhu > limit) {\n    alert = {\n        topic: 'iot/alert',\n        payload: {type: 'alert', suhu: data.suhu, limit: limit,\n                  message: 'Suhu ' + data.suhu + '°C melebihi batas ' + limit + '°C'}\n    };\n}\nreturn [out, db, alert];",
+    "outputs": 3,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 440,
+    "y": 80,
+    "wires": [
+      [
+        "ws_out"
+      ],
+      [
+        "sql_insert"
+      ],
+      [
+        "ws_out",
+        "mqtt_alert_out",
+        "debug_alert"
+      ]
+    ]
+  },
+  {
+    "id": "ws_out",
+    "type": "websocket out",
+    "z": "flow_api",
+    "name": "WebSocket Broadcast",
+    "server": "ws_listener",
+    "client": "",
+    "x": 760,
+    "y": 40,
+    "wires": []
+  },
+  {
+    "id": "sql_insert",
+    "type": "sqlite",
+    "z": "flow_api",
+    "mydb": "sqlite_db",
+    "sqlquery": "prepared",
+    "sql": "INSERT INTO sensor_history (suhu, kelembaban, timestamp, received) VALUES ($suhu, $kelembaban, $timestamp, $received)",
+    "name": "INSERT history",
+    "x": 740,
+    "y": 90,
+    "wires": [
+      []
+    ]
+  },
+  {
+    "id": "mqtt_alert_out",
+    "type": "mqtt out",
+    "z": "flow_api",
+    "name": "Publish Alert",
+    "topic": "",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker_config",
+    "x": 740,
+    "y": 140,
+    "wires": []
+  },
+  {
+    "id": "debug_alert",
+    "type": "debug",
+    "z": "flow_api",
+    "name": "Log Alert",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 730,
+    "y": 190,
+    "wires": []
+  },
+  {
+    "id": "init_inject",
+    "type": "inject",
+    "z": "flow_api",
+    "name": "Saat start",
+    "props": [
+      {
+        "p": "payload"
+      }
+    ],
+    "repeat": "",
+    "crontab": "",
+    "once": true,
+    "onceDelay": "1",
+    "topic": "",
+    "payload": "",
+    "payloadType": "date",
+    "x": 140,
+    "y": 260,
+    "wires": [
+      [
+        "sql_create"
+      ]
+    ]
+  },
+  {
+    "id": "sql_create",
+    "type": "sqlite",
+    "z": "flow_api",
+    "mydb": "sqlite_db",
+    "sqlquery": "fixed",
+    "sql": "CREATE TABLE IF NOT EXISTS sensor_history (id INTEGER PRIMARY KEY AUTOINCREMENT, suhu REAL, kelembaban REAL, timestamp TEXT, received TEXT)",
+    "name": "CREATE TABLE",
+    "x": 400,
+    "y": 260,
+    "wires": [
+      [
+        "debug_create"
+      ]
+    ]
+  },
+  {
+    "id": "debug_create",
+    "type": "debug",
+    "z": "flow_api",
+    "name": "Tabel siap",
+    "active": true,
+    "tosidebar": true,
+    "console": false,
+    "tostatus": false,
+    "complete": "payload",
+    "targetType": "msg",
+    "x": 640,
+    "y": 260,
+    "wires": []
+  },
+  {
+    "id": "get_suhu",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "GET /api/suhu",
+    "url": "/api/suhu",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 340,
+    "wires": [
+      [
+        "fn_suhu"
+      ]
+    ]
+  },
+  {
+    "id": "fn_suhu",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Auth + Data Terakhir",
+    "func": "const KEY = env.get('API_KEY') || 'rahasia123';\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nif (msg.req.headers['x-api-key'] !== KEY) {\n    msg.statusCode = 401;\n    msg.payload = {status: 'error', message: 'API key tidak valid'};\n    return msg;\n}\nconst data = flow.get('lastSensor') || {suhu: null, kelembaban: null, timestamp: null};\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', data: data, server_time: new Date().toISOString()};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 340,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "get_history",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "GET /api/history",
+    "url": "/api/history",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 160,
+    "y": 420,
+    "wires": [
+      [
+        "fn_history_in"
+      ]
+    ]
+  },
+  {
+    "id": "fn_history_in",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Auth + Siapkan Query",
+    "func": "const KEY = env.get('API_KEY') || 'rahasia123';\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nif (msg.req.headers['x-api-key'] !== KEY) {\n    msg.statusCode = 401;\n    msg.payload = {status: 'error', message: 'API key tidak valid'};\n    return [null, msg];\n}\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 420,
+    "wires": [
+      [
+        "sql_select"
+      ],
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "sql_select",
+    "type": "sqlite",
+    "z": "flow_api",
+    "mydb": "sqlite_db",
+    "sqlquery": "fixed",
+    "sql": "SELECT suhu, kelembaban, timestamp, received FROM (SELECT * FROM sensor_history ORDER BY id DESC LIMIT 50) ORDER BY id ASC",
+    "name": "SELECT 50 terakhir",
+    "x": 680,
+    "y": 420,
+    "wires": [
+      [
+        "fn_history_out"
+      ]
+    ]
+  },
+  {
+    "id": "fn_history_out",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Format Response History",
+    "func": "msg.statusCode = 200;\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nmsg.payload = {status: 'success', count: msg.payload.length, data: msg.payload};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 930,
+    "y": 420,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "post_kontrol",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "POST /api/kontrol",
+    "url": "/api/kontrol",
+    "method": "post",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 160,
+    "y": 520,
+    "wires": [
+      [
+        "fn_kontrol"
+      ]
+    ]
+  },
+  {
+    "id": "fn_kontrol",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Auth + Validasi + Publish",
+    "func": "const KEY = env.get('API_KEY') || 'rahasia123';\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nif (msg.req.headers['x-api-key'] !== KEY) {\n    msg.statusCode = 401;\n    msg.payload = {status: 'error', message: 'API key tidak valid'};\n    return [msg, null];\n}\nconst body = msg.payload || {};\nif (!body.device || !body.action) {\n    msg.statusCode = 400;\n    msg.payload = {status: 'error', message: 'device dan action wajib diisi'};\n    return [msg, null];\n}\nnode.send([null, {topic: 'iot/kontrol', payload: body}]);\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', message: 'Perintah terkirim', sent: body};\nreturn [msg, null];",
+    "outputs": 2,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 420,
+    "y": 520,
+    "wires": [
+      [
+        "http_resp"
+      ],
+      [
+        "mqtt_kontrol_out"
+      ]
+    ]
+  },
+  {
+    "id": "mqtt_kontrol_out",
+    "type": "mqtt out",
+    "z": "flow_api",
+    "name": "Publish Kontrol",
+    "topic": "",
+    "qos": "0",
+    "retain": "false",
+    "respTopic": "",
+    "contentType": "",
+    "userProps": "",
+    "correl": "",
+    "expiry": "",
+    "broker": "mqtt_broker_config",
+    "x": 700,
+    "y": 560,
+    "wires": []
+  },
+  {
+    "id": "put_threshold",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "PUT /api/threshold",
+    "url": "/api/threshold",
+    "method": "put",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 170,
+    "y": 620,
+    "wires": [
+      [
+        "fn_threshold"
+      ]
+    ]
+  },
+  {
+    "id": "fn_threshold",
+    "type": "function",
+    "z": "flow_api",
+    "name": "Auth + Set Threshold",
+    "func": "const KEY = env.get('API_KEY') || 'rahasia123';\nmsg.headers = {'Access-Control-Allow-Origin': '*'};\nif (msg.req.headers['x-api-key'] !== KEY) {\n    msg.statusCode = 401;\n    msg.payload = {status: 'error', message: 'API key tidak valid'};\n    return msg;\n}\nconst body = msg.payload || {};\nconst t = Number(body.max_suhu);\nif (body.max_suhu === undefined || body.max_suhu === '' || !isFinite(t)) {\n    msg.statusCode = 400;\n    msg.payload = {status: 'error', message: 'max_suhu wajib berupa angka'};\n    return msg;\n}\nglobal.set('threshold', t);\nmsg.statusCode = 200;\nmsg.payload = {status: 'success', max_suhu: t};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 430,
+    "y": 620,
+    "wires": [
+      [
+        "http_resp"
+      ]
+    ]
+  },
+  {
+    "id": "http_resp",
+    "type": "http response",
+    "z": "flow_api",
+    "name": "Kirim Response",
+    "statusCode": "",
+    "headers": {},
+    "x": 1000,
+    "y": 520,
+    "wires": []
+  },
+  {
+    "id": "http_cors",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "OPTIONS CORS",
+    "url": "/api/*",
+    "method": "options",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 700,
+    "wires": [
+      [
+        "fn_cors"
+      ]
+    ]
+  },
+  {
+    "id": "fn_cors",
+    "type": "function",
+    "z": "flow_api",
+    "name": "CORS Headers",
+    "func": "msg.statusCode = 204;\nmsg.payload = '';\nmsg.headers = {\n    'Access-Control-Allow-Origin': '*',\n    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',\n    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key'\n};\nreturn msg;",
+    "outputs": 1,
+    "timeout": 0,
+    "noerr": 0,
+    "initialize": "",
+    "finalize": "",
+    "libs": [],
+    "x": 400,
+    "y": 700,
+    "wires": [
+      [
+        "cors_resp"
+      ]
+    ]
+  },
+  {
+    "id": "cors_resp",
+    "type": "http response",
+    "z": "flow_api",
+    "name": "",
+    "statusCode": "",
+    "headers": {},
+    "x": 620,
+    "y": 700,
+    "wires": []
+  },
+  {
+    "id": "get_dashboard",
+    "type": "http in",
+    "z": "flow_api",
+    "name": "GET /dashboard",
+    "url": "/dashboard",
+    "method": "get",
+    "upload": false,
+    "swaggerDoc": "",
+    "x": 150,
+    "y": 780,
+    "wires": [
+      [
+        "tpl_dashboard"
+      ]
+    ]
+  },
+  {
+    "id": "tpl_dashboard",
+    "type": "template",
+    "z": "flow_api",
+    "name": "dashboard.html",
+    "field": "payload",
+    "fieldType": "msg",
+    "format": "html",
+    "syntax": "plain",
+    "template": "<!DOCTYPE html>\n<html lang=\"id\">\n<head>\n<meta charset=\"UTF-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n<title>IoT Dashboard - REST API</title>\n<style>\n  * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Segoe UI', sans-serif; }\n  body { background: linear-gradient(135deg, #667eea, #764ba2); min-height: 100vh; padding: 20px; color: #333; }\n  .container { max-width: 1000px; margin: 0 auto; }\n  h1 { color: white; text-align: center; margin-bottom: 25px; font-size: 28px; }\n  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin-bottom: 25px; }\n  .card { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); text-align: center; transition: transform 0.2s; }\n  .card:hover { transform: translateY(-5px); }\n  .card .label { font-size: 14px; color: #888; text-transform: uppercase; letter-spacing: 1px; }\n  .card .value { font-size: 42px; font-weight: bold; margin: 10px 0; color: #667eea; }\n  .card .unit { font-size: 18px; color: #aaa; }\n  .status-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 12px; }\n  .status-online { background: #d4edda; color: #155724; }\n  .status-offline { background: #f8d7da; color: #721c24; }\n  .panel { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); margin-bottom: 25px; }\n  .panel h2 { font-size: 18px; margin-bottom: 15px; color: #444; }\n  .controls { display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }\n  .btn { padding: 12px 30px; border: none; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; transition: all 0.2s; }\n  .btn-on { background: #28a745; color: white; }\n  .btn-on:hover { background: #218838; }\n  .btn-off { background: #dc3545; color: white; }\n  .btn-off:hover { background: #c82333; }\n  .btn-set { background: #667eea; color: white; }\n  .btn-set:hover { background: #5568d3; }\n  input[type=number] { padding: 11px; border: 1px solid #ccc; border-radius: 10px; font-size: 15px; width: 120px; }\n  table { width: 100%; border-collapse: collapse; }\n  th, td { padding: 10px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }\n  th { background: #f8f9fa; color: #666; text-transform: uppercase; font-size: 12px; }\n  tr:hover td { background: #f9f9f9; }\n  #log { background: #1e1e1e; color: #0f0; font-family: monospace; padding: 15px; border-radius: 10px; max-height: 180px; overflow-y: auto; font-size: 13px; line-height: 1.6; }\n  #log .error { color: #f66; }\n  #log .info { color: #6af; }\n  #log .warn { color: #fc6; }\n  #alertBox { display: none; background: #dc3545; color: white; padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; font-weight: 600; text-align: center; box-shadow: 0 10px 30px rgba(0,0,0,0.25); }\n</style>\n</head>\n<body>\n<div class=\"container\">\n  <h1>🌡️ IoT Dashboard — REST API</h1>\n\n  <div id=\"alertBox\"></div>\n\n  <!-- Kartu Sensor -->\n  <div class=\"cards\">\n    <div class=\"card\">\n      <div class=\"label\">Suhu</div>\n      <div class=\"value\" id=\"suhu\">--</div>\n      <div class=\"unit\">°C</div>\n    </div>\n    <div class=\"card\">\n      <div class=\"label\">Kelembaban</div>\n      <div class=\"value\" id=\"kelembaban\">--</div>\n      <div class=\"unit\">%</div>\n    </div>\n    <div class=\"card\">\n      <div class=\"label\">Status Sensor</div>\n      <div class=\"value\" style=\"font-size:22px;\">\n        <span class=\"status-badge status-offline\" id=\"status-badge\">OFFLINE</span>\n      </div>\n      <div class=\"unit\" id=\"ws-state\" style=\"font-size:13px;\">WebSocket: terputus</div>\n    </div>\n  </div>\n\n  <!-- Kontrol -->\n  <div class=\"panel\">\n    <h2>💡 Kontrol Perangkat</h2>\n    <div class=\"controls\">\n      <button class=\"btn btn-on\" onclick=\"kontrol('lamp','on')\">Nyalakan Lampu</button>\n      <button class=\"btn btn-off\" onclick=\"kontrol('lamp','off')\">Matikan Lampu</button>\n    </div>\n  </div>\n\n  <!-- Threshold -->\n  <div class=\"panel\">\n    <h2>🚨 Batas Suhu (Threshold)</h2>\n    <div class=\"controls\">\n      <input type=\"number\" id=\"thr\" value=\"30\" step=\"0.5\">\n      <span>°C</span>\n      <button class=\"btn btn-set\" onclick=\"setThreshold()\">Simpan Batas</button>\n    </div>\n  </div>\n\n  <!-- Grafik -->\n  <div class=\"panel\">\n    <h2>📈 Grafik Real-time</h2>\n    <canvas id=\"chart\" height=\"100\"></canvas>\n  </div>\n\n  <!-- History -->\n  <div class=\"panel\">\n    <h2>🗂️ 10 Data Sensor Terakhir</h2>\n    <table>\n      <thead><tr><th>Waktu</th><th>Suhu (°C)</th><th>Kelembaban (%)</th></tr></thead>\n      <tbody id=\"history-body\">\n        <tr><td colspan=\"3\" style=\"text-align:center;color:#999;\">Loading...</td></tr>\n      </tbody>\n    </table>\n  </div>\n\n  <!-- Log -->\n  <div class=\"panel\">\n    <h2>📋 Log Aktivitas</h2>\n    <div id=\"log\"></div>\n  </div>\n</div>\n\n<script src=\"https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js\"></script>\n<script>\n// ==============================\n// KONFIGURASI\n// ==============================\nconst API_KEY = 'rahasia123';   // harus sama dengan API key di Node-RED\n// Jika dibuka lewat http://localhost:1880/dashboard, ORIGIN kosong (satu alamat dengan API).\n// Jika dibuka langsung dari file (file://), arahkan ke Node-RED di localhost:1880.\nconst ORIGIN = location.protocol.startsWith('http') ? '' : 'http://localhost:1880';\nconst API_BASE = ORIGIN + '/api';\nconst WS_HOST = ORIGIN ? 'localhost:1880' : location.host;\nconst WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + WS_HOST + '/ws/sensor';\n\nlet rows = [];          // data sensor terbaru (maks 50)\nlet lastSeen = 0;       // waktu data terakhir diterima\n\n// ==============================\n// UTILITY\n// ==============================\nfunction log(msg, type = 'info') {\n  const el = document.getElementById('log');\n  const div = document.createElement('div');\n  div.className = type;\n  div.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;\n  el.appendChild(div);\n  el.scrollTop = el.scrollHeight;\n}\n\nfunction api(path, options = {}) {\n  return fetch(API_BASE + path, {\n    ...options,\n    headers: { 'X-API-Key': API_KEY, 'Content-Type': 'application/json', ...(options.headers || {}) }\n  });\n}\n\nfunction setBadge(online) {\n  const b = document.getElementById('status-badge');\n  b.textContent = online ? 'ONLINE' : 'OFFLINE';\n  b.className = 'status-badge ' + (online ? 'status-online' : 'status-offline');\n}\n\n// ==============================\n// GRAFIK (Chart.js)\n// ==============================\nconst chart = (typeof Chart !== 'undefined') ? new Chart(document.getElementById('chart'), {\n  type: 'line',\n  data: {\n    labels: [],\n    datasets: [\n      { label: 'Suhu (°C)', data: [], borderColor: '#e74c3c', backgroundColor: '#e74c3c33', tension: 0.3 },\n      { label: 'Kelembaban (%)', data: [], borderColor: '#3498db', backgroundColor: '#3498db33', tension: 0.3 }\n    ]\n  },\n  options: { animation: false, responsive: true }\n}) : null;\n\nif (!chart) log('Chart.js gagal dimuat (cek koneksi internet)', 'warn');\n\nfunction addPoint(d) {\n  if (!chart) return;\n  chart.data.labels.push(new Date(d.received).toLocaleTimeString());\n  chart.data.datasets[0].data.push(d.suhu);\n  chart.data.datasets[1].data.push(d.kelembaban);\n  if (chart.data.labels.length > 30) {\n    chart.data.labels.shift();\n    chart.data.datasets.forEach(ds => ds.data.shift());\n  }\n  chart.update();\n}\n\n// ==============================\n// TAMPILAN DATA\n// ==============================\nfunction updateCards(d) {\n  document.getElementById('suhu').textContent = Number(d.suhu).toFixed(1);\n  document.getElementById('kelembaban').textContent = Number(d.kelembaban).toFixed(1);\n  setBadge(true);\n  lastSeen = Date.now();\n}\n\nfunction renderHistory() {\n  const tbody = document.getElementById('history-body');\n  tbody.innerHTML = '';\n  if (rows.length === 0) {\n    tbody.innerHTML = '<tr><td colspan=\"3\" style=\"text-align:center;color:#999;\">Belum ada data</td></tr>';\n    return;\n  }\n  rows.slice(-10).reverse().forEach(d => {\n    const tr = document.createElement('tr');\n    [new Date(d.received).toLocaleTimeString(), d.suhu, d.kelembaban].forEach(v => {\n      const td = document.createElement('td');\n      td.textContent = v;\n      tr.appendChild(td);\n    });\n    tbody.appendChild(tr);\n  });\n}\n\nfunction handleSensor(d) {\n  updateCards(d);\n  rows.push(d);\n  if (rows.length > 50) rows.shift();\n  renderHistory();\n  addPoint(d);\n}\n\nfunction showAlert(message) {\n  const b = document.getElementById('alertBox');\n  b.textContent = '⚠️ ' + message;\n  b.style.display = 'block';\n  log(message, 'error');\n  clearTimeout(showAlert.t);\n  showAlert.t = setTimeout(() => { b.style.display = 'none'; }, 6000);\n}\n\n// ==============================\n// DATA AWAL (REST, sekali saat halaman dibuka)\n// ==============================\nasync function loadInitial() {\n  try {\n    const hRes = await api('/history');\n    if (hRes.status === 401) { log('API key salah (401)', 'error'); return; }\n    const h = await hRes.json();\n    rows = h.data || [];\n    rows.forEach(addPoint);\n    renderHistory();\n\n    const sRes = await api('/suhu');\n    const s = await sRes.json();\n    if (s.status === 'success' && s.data && s.data.suhu !== null) updateCards(s.data);\n    log('Data awal dimuat (' + rows.length + ' baris history)');\n  } catch (err) {\n    log('Gagal memuat data awal: ' + err.message, 'error');\n  }\n}\n\n// ==============================\n// WEBSOCKET (tanpa polling)\n// ==============================\nfunction connectWS() {\n  const ws = new WebSocket(WS_URL);\n  const state = document.getElementById('ws-state');\n  ws.onopen = () => { state.textContent = 'WebSocket: terhubung'; log('WebSocket terhubung'); };\n  ws.onmessage = (e) => {\n    try {\n      const m = JSON.parse(e.data);\n      if (m.type === 'sensor') handleSensor(m.data);\n      else if (m.type === 'alert') showAlert(m.message);\n    } catch (err) { log('Pesan WS tidak valid: ' + err.message, 'error'); }\n  };\n  ws.onclose = () => {\n    state.textContent = 'WebSocket: terputus, mencoba lagi...';\n    setTimeout(connectWS, 3000);\n  };\n  ws.onerror = () => ws.close();\n}\n\n// Tandai OFFLINE jika tidak ada data baru > 10 detik (hanya pengecekan lokal, bukan polling server)\nsetInterval(() => { if (lastSeen && Date.now() - lastSeen > 10000) setBadge(false); }, 3000);\n\n// ==============================\n// KONTROL LAMPU (POST)\n// ==============================\nasync function kontrol(device, action) {\n  try {\n    const res = await api('/kontrol', { method: 'POST', body: JSON.stringify({ device, action }) });\n    const json = await res.json();\n    if (json.status === 'success') log('✓ Perintah terkirim: ' + device + ' → ' + action);\n    else log('✗ Gagal: ' + json.message, 'error');\n  } catch (err) { log('✗ Error kontrol: ' + err.message, 'error'); }\n}\n\n// ==============================\n// THRESHOLD (PUT)\n// ==============================\nasync function setThreshold() {\n  const v = Number(document.getElementById('thr').value);\n  try {\n    const res = await api('/threshold', { method: 'PUT', body: JSON.stringify({ max_suhu: v }) });\n    const json = await res.json();\n    if (json.status === 'success') log('✓ Batas suhu diset ke ' + json.max_suhu + ' °C');\n    else log('✗ Gagal set batas: ' + json.message, 'error');\n  } catch (err) { log('✗ Error threshold: ' + err.message, 'error'); }\n}\n\n// ==============================\n// MULAI\n// ==============================\nlog('Dashboard dimulai (WebSocket, tanpa polling)');\nloadInitial();\nconnectWS();\n</script>\n</body>\n</html>\n",
+    "output": "str",
+    "x": 400,
+    "y": 780,
+    "wires": [
+      [
+        "resp_dashboard"
+      ]
+    ]
+  },
+  {
+    "id": "resp_dashboard",
+    "type": "http response",
+    "z": "flow_api",
+    "name": "Kirim HTML",
+    "statusCode": "200",
+    "headers": {
+      "Content-Type": "text/html; charset=utf-8"
+    },
+    "x": 640,
+    "y": 780,
+    "wires": []
+  }
+]
